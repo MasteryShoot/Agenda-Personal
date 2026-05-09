@@ -1,0 +1,63 @@
+════════════════════════════════════════════════════════
+         AGENDA PERSONAL — Instrucciones
+════════════════════════════════════════════════════════
+
+REQUISITO PREVIO
+────────────────
+Python 3.8 o superior instalado en tu PC.
+Descarga gratuita: https://www.python.org/downloads/
+
+IMPORTANTE al instalar Python:
+  ✓ Marca "Add Python to PATH" en la primera pantalla
+
+
+INSTALACIÓN (solo una vez)
+──────────────────────────
+1. Haz doble clic en:  INSTALAR.bat
+2. Sigue las instrucciones en pantalla
+3. La app se abrirá automáticamente
+
+Esto instala la app y la configura para que:
+  - Aparezca un acceso directo en tu Escritorio
+  - Se inicie automáticamente con Windows
+  - Te avise de fechas importantes al encender tu PC
+
+
+USO DIARIO
+──────────
+Doble clic en el acceso directo "Agenda Personal" del Escritorio.
+O ejecuta: Abrir_Agenda.bat
+
+
+TIPOS DE RECORDATORIOS
+────────────────────────
+📌 FECHA ÚNICA
+  - Para citas, tareas, eventos que ocurren una sola vez
+  - Una vez pasada la fecha, queda como "Pasado"
+  - Ejemplos: Cita médica, examen, reunión
+
+♻ PERMANENTE / RECURRENTE
+  - Para eventos que se repiten cada año
+  - Nunca desaparece — siempre muestra la próxima ocurrencia
+  - Ejemplos: Cumpleaños, aniversarios, feriados
+
+
+AVISO AUTOMÁTICO AL INICIAR WINDOWS
+─────────────────────────────────────
+Al encender tu PC, la app se abre en segundo plano
+y muestra un popup si hay fechas dentro del rango de aviso.
+
+Configura los días de aviso en:
+  Configuración → Alertas
+
+
+DATOS Y BACKUP
+──────────────
+Tus recordatorios se guardan en:
+  C:\Users\TU_USUARIO\AppData\Roaming\AgendaPersonal\
+
+Puedes hacer backup desde:
+  Configuración → Exportar JSON
+
+
+════════════════════════════════════════════════════════
