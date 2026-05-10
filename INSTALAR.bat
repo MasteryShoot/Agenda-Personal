@@ -34,7 +34,17 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo  OK: Archivos copiados a %APPDIR%
+echo  OK: agenda.py copiado a %APPDIR%
+
+REM Copiar el icono si existe
+if exist "%~dp0agenda.ico" (
+    copy /Y "%~dp0agenda.ico" "%APPDIR%\agenda.ico" >nul
+    echo  OK: Icono copiado a %APPDIR%
+    set ICOFILE=%APPDIR%\agenda.ico
+) else (
+    echo  AVISO: agenda.ico no encontrado, el acceso directo usara icono por defecto
+    set ICOFILE=
+)
 echo.
 
 echo  Creando acceso directo en el Escritorio...
@@ -48,6 +58,9 @@ echo oLink.TargetPath = "pythonw.exe" >> "%VBSFILE%"
 echo oLink.Arguments = chr(34) ^& "%APPDIR%\agenda.py" ^& chr(34) >> "%VBSFILE%"
 echo oLink.WorkingDirectory = "%APPDIR%" >> "%VBSFILE%"
 echo oLink.Description = "Agenda Personal de Recordatorios" >> "%VBSFILE%"
+if not "%ICOFILE%"=="" (
+    echo oLink.IconLocation = "%ICOFILE%, 0" >> "%VBSFILE%"
+)
 echo oLink.WindowStyle = 1 >> "%VBSFILE%"
 echo oLink.Save >> "%VBSFILE%"
 cscript //nologo "%VBSFILE%"

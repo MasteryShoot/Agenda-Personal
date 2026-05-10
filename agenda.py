@@ -50,6 +50,9 @@ FONT_BODY   = ("Segoe UI", 10)
 FONT_SMALL  = ("Segoe UI", 9)
 FONT_TINY   = ("Segoe UI", 8)
 
+# Cuántas tarjetas mostrar por página
+ITEMS_PER_PAGE = 6
+
 # ─── DATA ─────────────────────────────────────────────────────────────────────
 
 DEFAULT_CONFIG = {
@@ -115,7 +118,6 @@ def next_occurrence(month, day):
     try:
         candidate = datetime.date(t.year, month, day)
     except ValueError:
-        # Feb 29 etc.
         candidate = datetime.date(t.year, month, 28)
     if candidate < t:
         try:
@@ -172,6 +174,9 @@ MONTHS_ES = [
     "", "Enero","Febrero","Marzo","Abril","Mayo","Junio",
     "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
 ]
+# Lista para desplegables (índice 0 = "Enero" = mes 1)
+MONTHS_LIST = [f"{i:02d} — {MONTHS_ES[i]}" for i in range(1, 13)]
+
 DAYS_ES = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
 
 def fmt_date(d):
@@ -230,7 +235,7 @@ def show_startup_notification(root, reminders, cfg):
         else:
             if diff >= 0 and diff <= alert_days:
                 alerts.append((diff, r))
-            elif diff < 0 and diff >= -1:  # show "today/yesterday" for one-time too
+            elif diff < 0 and diff >= -1:
                 alerts.append((diff, r))
 
     if not alerts:
@@ -244,7 +249,6 @@ def show_startup_notification(root, reminders, cfg):
     pop.resizable(False, False)
     pop.attributes("-topmost", True)
 
-    # Position bottom-right
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
     pop.geometry(f"420x{min(70 + len(alerts)*62, 500)}+{sw-450}+{sh-100-min(70+len(alerts)*62,500)}")
@@ -301,7 +305,6 @@ class AgendaApp:
         self.root.geometry("1020x700")
         self.root.minsize(820, 560)
 
-        # Icon (optional, won't crash if missing)
         try:
             self.root.iconbitmap(default="agenda.ico")
         except Exception:
@@ -311,36 +314,34 @@ class AgendaApp:
         self.cfg  = load_config()
         self.filter_var = tk.StringVar(value="all")
         self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self.render_list())
+        self.search_var.trace_add("write", lambda *_: self._reset_page_and_render())
+
+        # Paginación
+        self._current_page = 0
 
         self._build_ui()
         self.render_list()
 
-        # Show startup popup after a short delay
         if self.cfg.get("show_popup_on_start", True):
             self.root.after(600, lambda: show_startup_notification(self.root, self.data, self.cfg))
 
-        # Minimize to taskbar initially (silent start)
-        # Comment the next line if you want app to show on startup:
-        # self.root.withdraw()
-
-        # System tray via minimize-to-taskbar workaround
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _reset_page_and_render(self):
+        self._current_page = 0
+        self.render_list()
 
     # ── BUILD UI ──────────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        # Sidebar
         self.sidebar = tk.Frame(self.root, bg=DARK["surface"], width=200)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
         self._build_sidebar()
 
-        # Main
         self.main = tk.Frame(self.root, bg=DARK["bg"])
         self.main.pack(side="left", fill="both", expand=True)
 
-        # Notebook (pages)
         self.pages = {}
         self._build_page_list()
         self._build_page_add()
@@ -374,14 +375,12 @@ class AgendaApp:
             btn.pack(fill="x")
             self.nav_btns[key] = btn
 
-        # Date display at bottom
         tk.Frame(self.sidebar, bg=DARK["border"], height=1).pack(fill="x", pady=20)
         t = today()
         tk.Label(self.sidebar, text=f"{t.day}", font=("Segoe UI", 32, "bold"),
                  bg=DARK["surface"], fg=DARK["accent"]).pack()
         tk.Label(self.sidebar, text=MONTHS_ES[t.month].upper(),
-                 font=FONT_TINY, bg=DARK["surface"], fg=DARK["text_dim"],
-                 letter_spacing=2).pack()
+                 font=FONT_TINY, bg=DARK["surface"], fg=DARK["text_dim"]).pack()
         tk.Label(self.sidebar, text=str(t.year),
                  font=FONT_TINY, bg=DARK["surface"], fg=DARK["text_dim"]).pack()
 
@@ -457,45 +456,42 @@ class AgendaApp:
                                 activeforeground=DARK["accent"],
                                 indicatoron=False,
                                 relief="flat", padx=10, pady=4, cursor="hand2",
-                                command=self.render_list)
+                                command=self._reset_page_and_render)
             rb.pack(side="left", padx=2)
 
-        # List canvas (scrollable)
+        # ── Área de lista (sin scrollbar, con paginación) ──────────────────
         list_outer = tk.Frame(frame, bg=DARK["bg"])
         list_outer.pack(fill="both", expand=True)
 
-        self.canvas = tk.Canvas(list_outer, bg=DARK["bg"], highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(list_outer, orient="vertical", command=self.canvas.yview)
-        self.scroll_frame = tk.Frame(self.canvas, bg=DARK["bg"])
+        # Contenedor de tarjetas
+        self.cards_frame = tk.Frame(list_outer, bg=DARK["bg"])
+        self.cards_frame.pack(fill="both", expand=True)
 
-        self.scroll_frame.bind("<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        # Barra de paginación (fija abajo)
+        self.pagination_bar = tk.Frame(list_outer, bg=DARK["bg"], pady=8)
+        self.pagination_bar.pack(fill="x", side="bottom")
 
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.bind("<MouseWheel>",
-            lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+    # ── RENDER LIST (con paginación + separador) ───────────────────────────
 
     def render_list(self):
-        for w in self.scroll_frame.winfo_children():
+        # Limpiar tarjetas
+        for w in self.cards_frame.winfo_children():
+            w.destroy()
+        for w in self.pagination_bar.winfo_children():
             w.destroy()
 
-        search  = self.search_var.get().lower().strip()
-        filt    = self.filter_var.get()
-        t       = today()
+        search = self.search_var.get().lower().strip()
+        filt   = self.filter_var.get()
 
-        # Sort: permanent by next occurrence, once by date
+        # ── Ordenar: pasados de más reciente a más antiguo,
+        #             futuros/hoy de más próximo a más lejano
         def sort_key(r):
             diff = days_until(r)
-            if diff < 0:
-                return 9999 + abs(diff)
-            return diff
+            return diff  # negativo = pasado, 0 = hoy, positivo = futuro
 
         items = sorted(self.data, key=sort_key)
 
-        # Filter
+        # ── Filtrar
         visible = []
         for r in items:
             diff = days_until(r)
@@ -514,7 +510,7 @@ class AgendaApp:
                 continue
             visible.append(r)
 
-        # Stats
+        # ── Stats
         all_pend = [r for r in self.data if r.get("permanent") or days_until(r) >= 0]
         perms    = [r for r in self.data if r.get("permanent")]
         urgents  = [r for r in self.data if urgency(r, self.cfg) in ("hoy","urgente")]
@@ -524,7 +520,7 @@ class AgendaApp:
         self.stat_labels["urgente"].config(text=str(len(urgents)))
         self.stat_labels["prox"].config(text=str(len(proximos)))
 
-        # Alert banner
+        # ── Alert banner
         alerts = [r for r in self.data if urgency(r, self.cfg) in ("hoy","urgente","pronto")]
         if alerts:
             lines = []
@@ -532,18 +528,121 @@ class AgendaApp:
                 diff = days_until(r)
                 lines.append(f"  ⚡ {r['title']}  —  {days_label(diff, r.get('permanent'))}")
             self.alert_lbl.config(text="\n".join(lines))
-            self.alert_frame.pack(fill="x", pady=(0,10), before=self.canvas.master)
+            self.alert_frame.pack(fill="x", pady=(0,10), before=self.cards_frame)
         else:
             self.alert_frame.pack_forget()
 
         if not visible:
-            tk.Label(self.scroll_frame, text="\n\n🗓\n\nNo hay recordatorios en esta vista.",
+            tk.Label(self.cards_frame, text="\n\n🗓\n\nNo hay recordatorios en esta vista.",
                      font=FONT_SUB, bg=DARK["bg"], fg=DARK["text_dim"],
                      justify="center").pack(pady=40)
             return
 
-        for r in visible:
-            self._build_card(self.scroll_frame, r)
+        # ── Separar pasados y futuros/hoy
+        pasados  = [r for r in visible if not r.get("permanent") and days_until(r) < 0]
+        futuros  = [r for r in visible if r.get("permanent") or days_until(r) >= 0]
+
+        # Pasados: de más reciente (diff=-1) a más antiguo (diff=-N)  → ordenar desc por diff
+        pasados  = sorted(pasados, key=lambda r: days_until(r), reverse=True)
+        # Futuros: de más próximo (diff=0) a más lejano
+        futuros  = sorted(futuros, key=lambda r: days_until(r))
+
+        # ── Construir lista con separador entre bloques
+        combined = []
+        if futuros:
+            combined.extend([("item", r) for r in futuros])
+        if pasados and futuros:
+            combined.append(("separator", None))
+        if pasados:
+            combined.extend([("item", r) for r in pasados])
+
+        # ── Paginación
+        total_items = len(combined)
+        # Contar sólo ítems reales para la paginación
+        real_items  = [x for x in combined if x[0] == "item"]
+        total_real  = len(real_items)
+        total_pages = max(1, -(-total_real // ITEMS_PER_PAGE))  # ceil division
+
+        # Clamp página actual
+        if self._current_page >= total_pages:
+            self._current_page = total_pages - 1
+
+        # Calcular qué parte de combined corresponde a la página actual
+        start_item = self._current_page * ITEMS_PER_PAGE
+        end_item   = start_item + ITEMS_PER_PAGE
+
+        # Recorrer combined y mostrar los ítems de la página,
+        # incluyendo el separador si cae en el rango visible
+        shown_items = 0
+        separator_shown = False
+        for entry in combined:
+            kind, r = entry
+            if kind == "separator":
+                # Mostrar el separador si la página tiene ítems de ambos lados
+                # (se muestra sólo si ya hay algo renderizado en esta página)
+                if shown_items > 0 and shown_items < ITEMS_PER_PAGE:
+                    separator_shown = True
+                    self._build_separator(self.cards_frame)
+                continue
+            # Es un ítem real
+            item_idx = real_items.index(entry)
+            if item_idx < start_item or item_idx >= end_item:
+                continue
+            self._build_card(self.cards_frame, r)
+            shown_items += 1
+
+        # ── Controles de paginación
+        if total_pages > 1:
+            nav = self.pagination_bar
+            tk.Button(nav, text="◀  Anterior", font=FONT_SMALL,
+                      bg=DARK["surface2"], fg=DARK["text_mid"],
+                      relief="flat", padx=12, pady=5, cursor="hand2",
+                      state="normal" if self._current_page > 0 else "disabled",
+                      command=self._prev_page).pack(side="left", padx=(0,6))
+
+            pg_lbl = tk.Label(nav,
+                              text=f"Página {self._current_page+1} de {total_pages}  ·  {total_real} recordatorio{'s' if total_real!=1 else ''}",
+                              font=FONT_SMALL, bg=DARK["bg"], fg=DARK["text_mid"])
+            pg_lbl.pack(side="left", padx=8)
+
+            tk.Button(nav, text="Siguiente  ▶", font=FONT_SMALL,
+                      bg=DARK["surface2"], fg=DARK["text_mid"],
+                      relief="flat", padx=12, pady=5, cursor="hand2",
+                      state="normal" if self._current_page < total_pages - 1 else "disabled",
+                      command=self._next_page).pack(side="left", padx=6)
+        else:
+            # Sin paginación: mostrar conteo simple
+            if total_real > 0:
+                tk.Label(self.pagination_bar,
+                         text=f"{total_real} recordatorio{'s' if total_real!=1 else ''}",
+                         font=FONT_SMALL, bg=DARK["bg"], fg=DARK["text_dim"]).pack(side="left")
+
+    def _prev_page(self):
+        if self._current_page > 0:
+            self._current_page -= 1
+            self.render_list()
+
+    def _next_page(self):
+        self._current_page += 1
+        self.render_list()
+
+    def _build_separator(self, parent):
+        """Línea divisoria entre eventos futuros y pasados."""
+        sep_frame = tk.Frame(parent, bg=DARK["bg"], pady=6)
+        sep_frame.pack(fill="x")
+
+        # Línea izquierda
+        tk.Frame(sep_frame, bg=DARK["border"], height=1).pack(
+            side="left", fill="x", expand=True, pady=8)
+
+        # Etiqueta central
+        tk.Label(sep_frame, text="  ✦  Eventos pasados  ✦  ",
+                 font=FONT_TINY, bg=DARK["bg"], fg=DARK["text_dim"],
+                 padx=8).pack(side="left")
+
+        # Línea derecha
+        tk.Frame(sep_frame, bg=DARK["border"], height=1).pack(
+            side="left", fill="x", expand=True, pady=8)
 
     def _build_card(self, parent, r):
         diff = days_until(r)
@@ -606,14 +705,11 @@ class AgendaApp:
         tags_row = tk.Frame(info, bg=DARK["surface"])
         tags_row.pack(anchor="w", pady=(4,0))
 
-        # Category tag
         self._tag(tags_row, r.get("cat","General"), DARK["blue"])
 
-        # Days tag
         dl = days_label(diff, r.get("permanent",False))
         self._tag(tags_row, dl, strip_color)
 
-        # Time tag
         if r.get("time"):
             self._tag(tags_row, f"🕐 {r['time']}", DARK["text_mid"])
 
@@ -656,8 +752,8 @@ class AgendaApp:
 
         self.form_type = tk.StringVar(value=("permanent" if data and data.get("permanent") else "once"))
         for val, lbl, desc in [
-            ("once",      "📌 Fecha única",   "Cita, tarea, evento puntual"),
-            ("permanent", "♻ Permanente",      "Cumpleaños, aniversario (se repite cada año)"),
+            ("once",      "📌 Fecha única",  "Cita, tarea, evento puntual"),
+            ("permanent", "♻ Permanente",    "Cumpleaños, aniversario (se repite cada año)"),
         ]:
             f = tk.Frame(type_frame, bg=DARK["surface"], padx=12, pady=8)
             f.pack(side="left", padx=8)
@@ -680,7 +776,7 @@ class AgendaApp:
         self.f_time  = self._field(fields_frame, "Hora (opcional, ej: 10:30 AM)", width=20)
         self.f_alert = self._field(fields_frame, f"Avisar con X días antes (defecto: {self.cfg['default_alert_days']})", width=8)
 
-        # Date section (for one-time)
+        # ── Sección fecha única ──────────────────────────────────────────────
         date_section = tk.Frame(fields_frame, bg=DARK["bg"])
         date_section.pack(anchor="w", fill="x", pady=4)
         tk.Label(date_section, text="Fecha *", font=FONT_BOLD,
@@ -688,44 +784,73 @@ class AgendaApp:
         date_row = tk.Frame(date_section, bg=DARK["bg"])
         date_row.pack(anchor="w")
 
-        self.f_year  = self._mini_field(date_row, "Año",  6)
-        self.f_month = self._mini_field(date_row, "Mes (1-12)", 6)
-        self.f_day   = self._mini_field(date_row, "Día",  5)
-        tk.Label(date_row, text="  (o deja año vacío para hoy+)",
+        # Año (campo libre)
+        self.f_year = self._mini_field(date_row, "Año", 6)
+
+        # Mes como dropdown
+        tk.Label(date_row, text="", bg=DARK["bg"]).pack(side="left", padx=4)
+        month_col = tk.Frame(date_row, bg=DARK["bg"])
+        month_col.pack(side="left", padx=4)
+        tk.Label(month_col, text="Mes", font=FONT_TINY,
+                 bg=DARK["bg"], fg=DARK["text_dim"]).pack()
+        self.f_month_var = tk.StringVar()
+        cb_month = ttk.Combobox(month_col, textvariable=self.f_month_var,
+                                values=MONTHS_LIST, font=FONT_BODY,
+                                state="readonly", width=16)
+        cb_month.pack()
+        self.f_month_cb = cb_month
+
+        # Día (campo libre)
+        self.f_day = self._mini_field(date_row, "Día", 5)
+        tk.Label(date_row, text="  (deja año vacío para el año actual)",
                  font=FONT_TINY, bg=DARK["bg"], fg=DARK["text_dim"]).pack(side="left")
 
-        # Permanent section (month+day only)
+        # ── Sección permanente ───────────────────────────────────────────────
         perm_section = tk.Frame(fields_frame, bg=DARK["bg"])
         tk.Label(perm_section, text="Día y mes del evento (se repetirá cada año) *",
                  font=FONT_BOLD, bg=DARK["bg"], fg=DARK["text_dim"]).pack(anchor="w")
         perm_row = tk.Frame(perm_section, bg=DARK["bg"])
         perm_row.pack(anchor="w")
-        self.f_perm_month = self._mini_field(perm_row, "Mes (1-12)", 6)
-        self.f_perm_day   = self._mini_field(perm_row, "Día",  5)
 
-        # Populate if editing
+        # Mes permanente como dropdown
+        perm_month_col = tk.Frame(perm_row, bg=DARK["bg"])
+        perm_month_col.pack(side="left", padx=4)
+        tk.Label(perm_month_col, text="Mes", font=FONT_TINY,
+                 bg=DARK["bg"], fg=DARK["text_dim"]).pack()
+        self.f_perm_month_var = tk.StringVar()
+        cb_perm_month = ttk.Combobox(perm_month_col, textvariable=self.f_perm_month_var,
+                                     values=MONTHS_LIST, font=FONT_BODY,
+                                     state="readonly", width=16)
+        cb_perm_month.pack()
+        self.f_perm_month_cb = cb_perm_month
+
+        self.f_perm_day = self._mini_field(perm_row, "Día", 5)
+
+        # ── Poblar si es edición ─────────────────────────────────────────────
         if data:
             self.f_title.insert(0, data.get("title",""))
             self.f_desc.insert("1.0", data.get("desc",""))
             self.f_cat.set(data.get("cat","General"))
             self.f_time.insert(0, data.get("time",""))
             self.f_alert.insert(0, str(data.get("alert_days","")))
+
             if data.get("permanent"):
-                self.f_perm_month.insert(0, str(data.get("recur_month","")))
+                m = data.get("recur_month", 1)
+                self.f_perm_month_var.set(MONTHS_LIST[m - 1])
                 self.f_perm_day.insert(0, str(data.get("recur_day","")))
             else:
-                d = data.get("date","")
-                if d:
-                    parts = d.split("-")
-                    if len(parts)==3:
+                d_str = data.get("date","")
+                if d_str:
+                    parts = d_str.split("-")
+                    if len(parts) == 3:
                         self.f_year.insert(0, parts[0])
-                        self.f_month.insert(0, parts[1].lstrip("0") or parts[1])
-                        self.f_day.insert(0, parts[2].lstrip("0") or parts[2])
+                        m = int(parts[1])
+                        self.f_month_var.set(MONTHS_LIST[m - 1])
+                        self.f_day.insert(0, str(int(parts[2])))
 
         self._toggle_form_type(date_section, perm_section)
 
-        # Save btn
-        self._editing_id = data["id"] if data else None
+        self._editing_id   = data["id"] if data else None
         self._date_section = date_section
         self._perm_section = perm_section
 
@@ -781,16 +906,27 @@ class AgendaApp:
         e.pack()
         return e
 
+    def _parse_month_combo(self, var):
+        """Extrae el número de mes de '03 — Marzo' → 3"""
+        val = var.get().strip()
+        if not val:
+            return None
+        try:
+            return int(val.split("—")[0].strip())
+        except Exception:
+            return None
+
     def _save_form(self):
-        title = self.f_title.get().strip()
-        desc  = self.f_desc.get("1.0","end").strip()
-        cat   = self.f_cat.get()
-        time_ = self.f_time.get().strip()
+        title     = self.f_title.get().strip()
+        desc      = self.f_desc.get("1.0","end").strip()
+        cat       = self.f_cat.get()
+        time_     = self.f_time.get().strip()
         alert_raw = self.f_alert.get().strip()
         alert_days = int(alert_raw) if alert_raw.isdigit() else self.cfg["default_alert_days"]
 
         if not title:
-            messagebox.showerror("Error", "El título es obligatorio."); return
+            messagebox.showerror("Error", "El título es obligatorio.")
+            return
 
         is_perm = (self.form_type.get() == "permanent")
         rec = {
@@ -804,31 +940,35 @@ class AgendaApp:
         }
 
         if is_perm:
-            m_raw = self.f_perm_month.get().strip()
+            m = self._parse_month_combo(self.f_perm_month_var)
             d_raw = self.f_perm_day.get().strip()
-            if not m_raw or not d_raw:
-                messagebox.showerror("Error","Ingresa el mes y día del evento recurrente."); return
+            if not m or not d_raw:
+                messagebox.showerror("Error", "Selecciona el mes y escribe el día.")
+                return
             try:
-                m,d = int(m_raw), int(d_raw)
-                assert 1<=m<=12 and 1<=d<=31
+                d = int(d_raw)
+                assert 1 <= m <= 12 and 1 <= d <= 31
             except Exception:
-                messagebox.showerror("Error","Mes o día inválido."); return
+                messagebox.showerror("Error", "Mes o día inválido.")
+                return
             rec["recur_month"] = m
             rec["recur_day"]   = d
             rec["date"]        = f"{today().year}-{m:02d}-{d:02d}"
         else:
             y_raw = self.f_year.get().strip()
-            m_raw = self.f_month.get().strip()
+            m     = self._parse_month_combo(self.f_month_var)
             d_raw = self.f_day.get().strip()
-            if not m_raw or not d_raw:
-                messagebox.showerror("Error","Ingresa la fecha."); return
+            if not m or not d_raw:
+                messagebox.showerror("Error", "Selecciona el mes y escribe el día.")
+                return
             try:
                 y = int(y_raw) if y_raw else today().year
-                m,d = int(m_raw), int(d_raw)
+                d = int(d_raw)
                 date_obj = datetime.date(y, m, d)
                 rec["date"] = date_obj.isoformat()
             except Exception:
-                messagebox.showerror("Error","Fecha inválida."); return
+                messagebox.showerror("Error", "Fecha inválida. Verifica día y año.")
+                return
 
         if self._editing_id:
             idx = next((i for i,r in enumerate(self.data) if r["id"]==self._editing_id), None)
@@ -839,8 +979,8 @@ class AgendaApp:
 
         save_data(self.data)
         messagebox.showinfo("✓", f"Recordatorio guardado:\n{title}")
+        self._current_page = 0
         self.show_page("list")
-        # Reset form
         self._build_add_form(self.pages["add"], editing=False)
 
     # ── EDIT / DELETE ─────────────────────────────────────────────────────────
@@ -857,6 +997,7 @@ class AgendaApp:
         if messagebox.askyesno("Eliminar", f"¿Eliminar '{r['title']}'?\nEsta acción no se puede deshacer."):
             self.data = [x for x in self.data if x["id"]!=rid]
             save_data(self.data)
+            self._current_page = 0
             self.render_list()
 
     # ── PAGE: SETTINGS ────────────────────────────────────────────────────────
@@ -901,6 +1042,11 @@ class AgendaApp:
             "N días o menos = PRÓXIMO",
             lambda p: self._cfg_spin(p, "upcoming_days", 0, 90))
 
+        section("Visualización")
+        row("Recordatorios por página",
+            "Cuántas tarjetas mostrar por página en la lista",
+            lambda p: self._cfg_spin(p, "items_per_page", 3, 20))
+
         section("Inicio")
         self.cfg_popup_var = tk.BooleanVar(value=self.cfg.get("show_popup_on_start", True))
         row("Mostrar notificación al iniciar",
@@ -936,7 +1082,8 @@ class AgendaApp:
                   command=self.save_settings).pack(anchor="w", pady=16)
 
     def _cfg_spin(self, parent, key, mn, mx):
-        var = tk.IntVar(value=self.cfg.get(key, 3))
+        default_vals = {"items_per_page": ITEMS_PER_PAGE}
+        var = tk.IntVar(value=self.cfg.get(key, default_vals.get(key, 3)))
         sb = tk.Spinbox(parent, from_=mn, to=mx, textvariable=var,
                         font=FONT_BODY, bg=DARK["surface2"], fg=DARK["text"],
                         buttonbackground=DARK["surface"],
@@ -945,11 +1092,15 @@ class AgendaApp:
         return sb
 
     def save_settings(self):
-        for key in ("default_alert_days","urgent_days","soon_days","upcoming_days"):
+        global ITEMS_PER_PAGE
+        for key in ("default_alert_days","urgent_days","soon_days","upcoming_days","items_per_page"):
             try:
                 self.cfg[key] = int(getattr(self, f"_spin_{key}").get())
             except Exception:
                 pass
+        # Actualizar constante global de paginación
+        ITEMS_PER_PAGE = self.cfg.get("items_per_page", ITEMS_PER_PAGE)
+
         self.cfg["show_popup_on_start"] = self.cfg_popup_var.get()
 
         autostart = self.cfg_autostart_var.get()
@@ -959,6 +1110,7 @@ class AgendaApp:
 
         save_config(self.cfg)
         messagebox.showinfo("✓", "Configuración guardada.")
+        self._current_page = 0
         self.render_list()
 
     def export_data(self):
@@ -985,6 +1137,7 @@ class AgendaApp:
                             self.cfg.update(obj["config"])
                         save_data(self.data)
                         save_config(self.cfg)
+                        self._current_page = 0
                         self.render_list()
                         messagebox.showinfo("✓","Datos importados.")
             except Exception as e:
